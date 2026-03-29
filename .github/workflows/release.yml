@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    uses: ./.github/workflows/build-android.yml
+
+  build-ios:
+    uses: ./.github/workflows/build-ios.yml
+
+  release:
+    needs: [ build-android, build-ios ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat version.txt | tr -d '[:space:]')
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: android-*
+          merge-multiple: true
+          path: release-artifacts/android
+
+      - name: Download iOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ios-*
+          merge-multiple: true
+          path: release-artifacts/ios
+
+      - name: Compute checksum for SPM
+        run: |
+          find release-artifacts/ios -name "*.xcframework.zip" | while read f; do
+            shasum -a 256 "$f" | awk '{print $1}' > "${f}.sha256"
+            echo "$(basename $f): $(cat ${f}.sha256)"
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Release ${{ steps.version.outputs.tag }}"
+          body: |
+            ## Сборка от ${{ github.sha }}
+
+            ### Android
+            - Минимальный API level: 21
+            - Поддержка 16KB page size
+
+            ### iOS
+            - Собрано через gomobile
+            - Поддержка: iOS, iOSSimulator, macOS, macCatalyst
+
+            ### Как использовать в KMP/CMP проекте — см. README
+          files: |
+            release-artifacts/**/*.aar
+            release-artifacts/**/*.xcframework.zip
+            release-artifacts/**/*.sha256
+          draft: false
+          prerelease: false

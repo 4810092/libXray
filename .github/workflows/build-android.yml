@@ -1,0 +1,88 @@
+name: Build Android
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      version:
+        description: "Build version"
+        value: ${{ jobs.build.outputs.version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout libXray
+        uses: actions/checkout@v4
+        with:
+          path: libXray
+
+      - name: Checkout Xray-core (рядом с libXray, как требует проект)
+        uses: actions/checkout@v4
+        with:
+          repository: XTLS/Xray-core
+          path: Xray-core
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: libXray/go.mod
+          cache-dependency-path: libXray/go.sum
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat libXray/version.txt | tr -d '[:space:]')
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "version=${VERSION}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build Android (API 21, поддержка 16KB page size)
+        working-directory: libXray
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CGO_LDFLAGS: "-Wl,-z,max-page-size=16384"
+        run: python3 build/main.py android 21
+
+      - name: Verify 16KB page alignment
+        working-directory: libXray
+        run: |
+          find . -name "*.so" | while read f; do
+            echo "Checking $f..."
+            python3 -c "
+          import struct, sys
+          with open('$f', 'rb') as f:
+              magic = f.read(4)
+              if magic == b'\x7fELF':
+                  print('  ELF file OK')
+              else:
+                  print('  Not ELF, skip')
+          "
+          done
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ steps.version.outputs.version }}
+          path: |
+            libXray/**/*.aar
+            libXray/**/*.jar
+          retention-days: 7

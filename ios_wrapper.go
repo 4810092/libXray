@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	c "github.com/xtls/libxray/controller"
-	"github.com/xtls/libxray/dns"
 	"github.com/xtls/xray-core/common/platform"
 )
 
@@ -16,16 +15,6 @@ import (
 // to bind the socket to the physical interface (en0/pdp_ip0), bypassing VPN routing.
 type SocketProtector interface {
 	ProtectFd(int) bool
-}
-
-func InitDns(controller SocketProtector, server string) {
-	dns.InitDns(server, func(fd uintptr) {
-		controller.ProtectFd(int(fd))
-	})
-}
-
-func ResetDns() {
-	dns.ResetDns()
 }
 
 func SetTunFd(fd int64) {

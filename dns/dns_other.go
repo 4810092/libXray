@@ -1,4 +1,4 @@
-//go:build !android && !darwin && !linux && !windows
+//go:build !android && !linux && !windows
 
 package dns
 

@@ -9,9 +9,6 @@ from app.cmd import (
     delete_dir_if_exists,
 )
 
-XRAY_CORE_REPO = "https://github.com/XTLS/Xray-core.git"
-XRAY_CORE_VERSION = "v26.2.6"
-XRAY_CORE_DIR_NAME = "Xray-core-libXray"
 LIBXRAY_MOD_NAME = "github.com/xtls/libxray"
 
 
@@ -31,41 +28,12 @@ class Builder(object):
             dir_path = os.path.join(self.lib_dir, dir_name)
             delete_dir_if_exists(dir_path)
 
-    def clone_xray_core(self):
-        xray_core_dir = os.path.join(self.lib_dir, "..", XRAY_CORE_DIR_NAME)
-        delete_dir_if_exists(xray_core_dir)
-        ret = subprocess.run(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                XRAY_CORE_VERSION,
-                XRAY_CORE_REPO,
-                xray_core_dir,
-            ]
-        )
-        if ret.returncode != 0:
-            raise Exception("git clone Xray-core failed")
-
     def init_go_env(self):
         os.chdir(self.lib_dir)
         self.clean_lib_files(["go.mod", "go.sum"])
         ret = subprocess.run(["go", "mod", "init", LIBXRAY_MOD_NAME])
         if ret.returncode != 0:
             raise Exception("go mod init failed")
-        ret = subprocess.run(
-            [
-                "go",
-                "mod",
-                "edit",
-                "-replace",
-                f"github.com/xtls/xray-core=../{XRAY_CORE_DIR_NAME}",
-            ]
-        )
-        if ret.returncode != 0:
-            raise Exception("go mod edit failed")
 
         ret = subprocess.run(
             [
@@ -105,10 +73,9 @@ class Builder(object):
         self.fix_package_name()
 
     def copy_template_file(self):
-        files = ["main.go"]
-        for file in files:
-            src_file = os.path.join(self.build_dir, "template", file)
-            shutil.copy(src_file, self.lib_dir)
+        src_file = os.path.join(self.build_dir, "template", "main.gotemplate")
+        dst_file = os.path.join(self.lib_dir, "main.go")
+        shutil.copy(src_file, dst_file)
 
     def fix_package_name(self):
         files = os.listdir(self.lib_dir)
@@ -130,7 +97,6 @@ class Builder(object):
             f.writelines(new_lines)
 
     def before_build(self):
-        self.clone_xray_core()
         self.init_go_env()
         self.download_geo()
 

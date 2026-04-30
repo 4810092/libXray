@@ -52,6 +52,7 @@ type ClashProxy struct {
 	EchOpts    *ClashProxyEchOpts    `yaml:"ech-opts,omitempty"`
 	WsOpts     *ClashProxyWsOpts     `yaml:"ws-opts,omitempty"`
 	GrpcOpts   *ClashProxyGrpcOpts   `yaml:"grpc-opts,omitempty"`
+	XhttpOpts  *ClashProxyXhttpOpts  `yaml:"xhttp-opts,omitempty"`
 }
 
 type ClashProxyEchOpts struct {
@@ -88,33 +89,66 @@ type ClashProxyGrpcOpts struct {
 	GrpcServiceName string `yaml:"grpc-service-name,omitempty"`
 }
 
-func tryToParseClashYaml(text string) (*conf.Config, error) {
-	clashBytes := []byte(text)
-	clash := ClashYaml{}
-
-	err := yaml.Unmarshal(clashBytes, &clash)
-	if err != nil {
-		return nil, err
-	}
-
-	xray := clash.xrayConfig()
-	return xray, nil
+type ClashProxyXhttpOpts struct {
+	Path               string                               `yaml:"path,omitempty"`
+	Host               string                               `yaml:"host,omitempty"`
+	Mode               string                               `yaml:"mode,omitempty"`
+	Headers            map[string]string                    `yaml:"headers,omitempty"`
+	NoGrpcHeader       bool                                 `yaml:"no-grpc-header,omitempty"`
+	XPaddingBytes      string                               `yaml:"x-padding-bytes,omitempty"`
+	ScMaxEachPostBytes string                               `yaml:"sc-max-each-post-bytes,omitempty"`
+	ReuseSettings      *ClashProxyXhttpOptsXMUX             `yaml:"reuse-settings,omitempty"`
+	DownloadSettings   *ClashProxyXhttpOptsDownloadSettings `yaml:"download-settings,omitempty"`
 }
 
-func (clash ClashYaml) xrayConfig() *conf.Config {
-	xray := &conf.Config{}
+type ClashProxyXhttpOptsXMUX struct {
+	MaxConnections   string `yaml:"max-connections,omitempty"`
+	MaxConcurrency   string `yaml:"max-concurrency,omitempty"`
+	CMaxReuseTimes   string `yaml:"c-max-reuse-times,omitempty"`
+	HMaxRequestTimes string `yaml:"h-max-request-times,omitempty"`
+	HMaxReusableSecs string `yaml:"h-max-reusable-secs,omitempty"`
+}
 
-	var outbounds []conf.OutboundDetourConfig
-	for _, proxy := range clash.Proxies {
-		if outbound, err := proxy.outbound(); err == nil {
-			outbounds = append(outbounds, *outbound)
-		} else {
-			fmt.Println(err)
-		}
+type ClashProxyXhttpOptsDownloadSettings struct {
+	Path               string                   `yaml:"path,omitempty"`
+	Host               string                   `yaml:"host,omitempty"`
+	Mode               string                   `yaml:"mode,omitempty"`
+	Headers            map[string]string        `yaml:"headers,omitempty"`
+	NoGrpcHeader       bool                     `yaml:"no-grpc-header,omitempty"`
+	XPaddingBytes      string                   `yaml:"x-padding-bytes,omitempty"`
+	ScMaxEachPostBytes string                   `yaml:"sc-max-each-post-bytes,omitempty"`
+	ReuseSettings      *ClashProxyXhttpOptsXMUX `yaml:"reuse-settings,omitempty"`
+	// proxy part
+	Server            string                 `yaml:"server,omitempty"`
+	Port              uint16                 `yaml:"port,omitempty"`
+	Tls               bool                   `yaml:"tls,omitempty"`
+	Alpn              []string               `yaml:"alpn,omitempty"`
+	EchOpts           *ClashProxyEchOpts     `yaml:"ech-opts,omitempty"`
+	RealityOpts       *ClashProxyRealityOpts `yaml:"reality-opts,omitempty"`
+	SkipCertVerify    bool                   `yaml:"skip-cert-verify,omitempty"`
+	Fingerprint       string                 `yaml:"fingerprint,omitempty"`
+	Servername        string                 `yaml:"servername,omitempty"`
+	ClientFingerprint string                 `yaml:"client-fingerprint,omitempty"`
+}
+
+func tryToParseClashYaml(text string) (*conf.Config, error) {
+	var clash ClashYaml
+	if err := yaml.Unmarshal([]byte(text), &clash); err != nil {
+		return nil, err
 	}
-	xray.OutboundConfigs = outbounds
+	return clash.toXrayConfig(), nil
+}
 
-	return xray
+func (clash ClashYaml) toXrayConfig() *conf.Config {
+	outbounds := make([]conf.OutboundDetourConfig, 0, len(clash.Proxies))
+	for _, proxy := range clash.Proxies {
+		outbound, err := proxy.outbound()
+		if err != nil {
+			continue
+		}
+		outbounds = append(outbounds, *outbound)
+	}
+	return &conf.Config{OutboundConfigs: outbounds}
 }
 
 func (proxy ClashProxy) outbound() (*conf.OutboundDetourConfig, error) {
@@ -159,7 +193,7 @@ func (proxy ClashProxy) outbound() (*conf.OutboundDetourConfig, error) {
 		}
 		return outbound, nil
 	}
-	return nil, fmt.Errorf("unsupport proxy type: %s", proxy.Type)
+	return nil, fmt.Errorf("unsupported proxy type: %s", proxy.Type)
 }
 
 func (proxy ClashProxy) shadowsocksOutbound() (*conf.OutboundDetourConfig, error) {
@@ -193,8 +227,7 @@ func (proxy ClashProxy) shadowsocksOutbound() (*conf.OutboundDetourConfig, error
 			return nil, fmt.Errorf("unsupport ss plugin-opts mode: %s", proxy.PluginOpts.Mode)
 		}
 		streamSetting := &conf.StreamConfig{}
-		network := conf.TransportProtocol("websocket")
-		streamSetting.Network = &network
+		streamSetting.Network = new(conf.TransportProtocol("websocket"))
 
 		wsSettings := &conf.WebSocketConfig{}
 		if len(proxy.PluginOpts.Host) > 0 {
@@ -265,6 +298,8 @@ func (proxy ClashProxy) vlessOutbound() (*conf.OutboundDetourConfig, error) {
 	settings.Flow = proxy.Flow
 	if len(proxy.Encryption) > 0 {
 		settings.Encryption = proxy.Encryption
+	} else {
+		settings.Encryption = "none"
 	}
 
 	settingsRawMessage, err := convertJsonToRawMessage(settings)
@@ -375,7 +410,7 @@ func (proxy ClashProxy) streamSettings(outbound conf.OutboundDetourConfig) (*con
 	// fix hysteria network
 	if proxy.Type == "hysteria2" {
 		network = "hysteria"
-		transportProtocol = conf.TransportProtocol("hysteria")
+		transportProtocol = "hysteria"
 		streamSettings.Network = &transportProtocol
 	}
 
@@ -395,54 +430,29 @@ func (proxy ClashProxy) streamSettings(outbound conf.OutboundDetourConfig) (*con
 			grpcSettings.ServiceName = proxy.GrpcOpts.GrpcServiceName
 			streamSettings.GRPCSettings = grpcSettings
 		}
+	case "xhttp":
+		if proxy.XhttpOpts != nil {
+			xhttpSettings, err := parseXHTTPOpts(*proxy.XhttpOpts)
+			if err != nil {
+				return nil, err
+			}
+			streamSettings.XHTTPSettings = xhttpSettings
+		}
 	case "hysteria":
 		hysteriaSettings := &conf.HysteriaConfig{}
 		hysteriaSettings.Version = 2
 		hysteriaSettings.Auth = proxy.Password
-		if len(proxy.Up) > 0 {
-			hysteriaSettings.Up = conf.Bandwidth(proxy.Up)
-		}
-		if len(proxy.Down) > 0 {
-			hysteriaSettings.Down = conf.Bandwidth(proxy.Down)
-		}
-		if len(proxy.Ports) > 0 {
-			udpHop := conf.UdpHop{}
-			portListRawMessage, err := convertJsonToRawMessage(proxy.Ports)
-			if err != nil {
-				return nil, err
-			}
-			udpHop.PortList = portListRawMessage
-
-			interval := conf.Int32Range{}
-			interval.Left = proxy.HopInterval
-			interval.Right = proxy.HopInterval
-
-			udpHop.Interval = &interval
-
-			hysteriaSettings.UdpHop = udpHop
-		}
 		streamSettings.HysteriaSettings = hysteriaSettings
-		// udpmasks
-		if proxy.Obfs == "salamander" {
-			obfs := conf.Mask{}
-			obfs.Type = "salamander"
 
-			settings := &conf.Salamander{}
-			settings.Password = proxy.ObfsPassword
-
-			settingsRawMessage, err := convertJsonToRawMessage(settings)
-			if err != nil {
-				return nil, err
-			}
-
-			obfs.Settings = &settingsRawMessage
-
-			udp := []conf.Mask{obfs}
-			finalMask := conf.FinalMask{}
-			finalMask.Udp = udp
-
-			streamSettings.FinalMask = &finalMask
+		var hopPtr *int32
+		if proxy.HopInterval > 0 {
+			hopPtr = new(proxy.HopInterval)
 		}
+		fm, err := buildHy2FinalMask(proxy.Up, proxy.Down, proxy.Ports, hopPtr, proxy.Obfs, proxy.ObfsPassword)
+		if err != nil {
+			return nil, err
+		}
+		streamSettings.FinalMask = fm
 	}
 	proxy.parseSecurity(streamSettings, outbound)
 	return streamSettings, nil
@@ -476,8 +486,7 @@ func (proxy ClashProxy) parseSecurity(streamSettings *conf.StreamConfig, outboun
 		realitySettings.ServerName = proxy.Sni
 	}
 	if len(proxy.Alpn) > 0 {
-		alpn := conf.StringList(proxy.Alpn)
-		tlsSettings.ALPN = &alpn
+		tlsSettings.ALPN = new(conf.StringList(proxy.Alpn))
 	}
 	if len(proxy.Fingerprint) > 0 {
 		tlsSettings.Fingerprint = proxy.Fingerprint
@@ -488,9 +497,202 @@ func (proxy ClashProxy) parseSecurity(streamSettings *conf.StreamConfig, outboun
 		realitySettings.Fingerprint = proxy.ClientFingerprint
 	}
 
-	if outbound.Protocol == "trojan" && len(streamSettings.Security) == 0 {
+	tlsSettings.AllowInsecure = proxy.SkipCertVerify
+
+	if (outbound.Protocol == "trojan" || outbound.Protocol == "hysteria") && len(streamSettings.Security) == 0 {
 		streamSettings.Security = "tls"
 	}
+
+	switch streamSettings.Security {
+	case "tls":
+		streamSettings.TLSSettings = tlsSettings
+	case "reality":
+		streamSettings.REALITYSettings = realitySettings
+	}
+}
+
+func parseXHTTPOpts(xhttpOpts ClashProxyXhttpOpts) (*conf.SplitHTTPConfig, error) {
+	xhttpSettings := &conf.SplitHTTPConfig{}
+	xhttpSettings.Path = xhttpOpts.Path
+	xhttpSettings.Host = xhttpOpts.Host
+	xhttpSettings.Mode = xhttpOpts.Mode
+
+	extra := &conf.SplitHTTPConfig{}
+	if len(xhttpOpts.Headers) > 0 {
+		extra.Headers = xhttpOpts.Headers
+	}
+	extra.NoGRPCHeader = xhttpOpts.NoGrpcHeader
+	if len(xhttpOpts.XPaddingBytes) > 0 {
+		int32Range, err := parseInt32RangeString(xhttpOpts.XPaddingBytes)
+		if err != nil {
+			return nil, err
+		}
+		extra.XPaddingBytes = *int32Range
+	}
+	if len(xhttpOpts.ScMaxEachPostBytes) > 0 {
+		int32Range, err := parseInt32RangeString(xhttpOpts.ScMaxEachPostBytes)
+		if err != nil {
+			return nil, err
+		}
+		extra.ScMaxEachPostBytes = *int32Range
+	}
+	if xhttpOpts.ReuseSettings != nil {
+		xmuxSettings, err := parseXHTTPXMUX(xhttpOpts.ReuseSettings)
+		if err != nil {
+			return nil, err
+		}
+		extra.Xmux = *xmuxSettings
+	}
+	if xhttpOpts.DownloadSettings != nil {
+		downloadSettings, err := parseXHTTPDownloadSettings(xhttpOpts.DownloadSettings)
+		if err != nil {
+			return nil, err
+		}
+		extra.DownloadSettings = downloadSettings
+	}
+
+	extraRawMessage, err := convertJsonToRawMessage(extra)
+	if err != nil {
+		return nil, err
+	}
+	xhttpSettings.Extra = extraRawMessage
+	return xhttpSettings, nil
+}
+
+func parseInt32RangeString(s string) (*conf.Int32Range, error) {
+	left, right, err := conf.ParseRangeString(s)
+	if err != nil {
+		return nil, err
+	}
+	return &conf.Int32Range{
+		Left:  int32(left),
+		Right: int32(right),
+		From:  int32(left),
+		To:    int32(right),
+	}, nil
+}
+
+func parseXHTTPXMUX(reuseSettings *ClashProxyXhttpOptsXMUX) (*conf.XmuxConfig, error) {
+	xmuxSettings := &conf.XmuxConfig{}
+	if len(reuseSettings.MaxConnections) > 0 {
+		int32Range, err := parseInt32RangeString(reuseSettings.MaxConnections)
+		if err != nil {
+			return nil, err
+		}
+		xmuxSettings.MaxConnections = *int32Range
+	}
+	if len(reuseSettings.MaxConcurrency) > 0 {
+		int32Range, err := parseInt32RangeString(reuseSettings.MaxConcurrency)
+		if err != nil {
+			return nil, err
+		}
+		xmuxSettings.MaxConcurrency = *int32Range
+	}
+	if len(reuseSettings.CMaxReuseTimes) > 0 {
+		int32Range, err := parseInt32RangeString(reuseSettings.CMaxReuseTimes)
+		if err != nil {
+			return nil, err
+		}
+		xmuxSettings.CMaxReuseTimes = *int32Range
+	}
+	if len(reuseSettings.HMaxRequestTimes) > 0 {
+		int32Range, err := parseInt32RangeString(reuseSettings.HMaxRequestTimes)
+		if err != nil {
+			return nil, err
+		}
+		xmuxSettings.HMaxRequestTimes = *int32Range
+	}
+	if len(reuseSettings.HMaxReusableSecs) > 0 {
+		int32Range, err := parseInt32RangeString(reuseSettings.HMaxReusableSecs)
+		if err != nil {
+			return nil, err
+		}
+		xmuxSettings.HMaxReusableSecs = *int32Range
+	}
+	return xmuxSettings, nil
+}
+
+func parseXHTTPDownloadSettings(downloadSettings *ClashProxyXhttpOptsDownloadSettings) (*conf.StreamConfig, error) {
+	streamSettings := &conf.StreamConfig{}
+
+	streamSettings.Address = parseAddress(downloadSettings.Server)
+	streamSettings.Port = downloadSettings.Port
+
+	streamSettings.Network = new(conf.TransportProtocol("xhttp"))
+
+	xhttpSettings := &conf.SplitHTTPConfig{}
+	xhttpSettings.Path = downloadSettings.Path
+	xhttpSettings.Host = downloadSettings.Host
+	xhttpSettings.Mode = downloadSettings.Mode
+
+	if len(downloadSettings.Headers) > 0 {
+		xhttpSettings.Headers = downloadSettings.Headers
+	}
+	xhttpSettings.NoGRPCHeader = downloadSettings.NoGrpcHeader
+	if len(downloadSettings.XPaddingBytes) > 0 {
+		int32Range, err := parseInt32RangeString(downloadSettings.XPaddingBytes)
+		if err != nil {
+			return nil, err
+		}
+		xhttpSettings.XPaddingBytes = *int32Range
+	}
+	if len(downloadSettings.ScMaxEachPostBytes) > 0 {
+		int32Range, err := parseInt32RangeString(downloadSettings.ScMaxEachPostBytes)
+		if err != nil {
+			return nil, err
+		}
+		xhttpSettings.ScMaxEachPostBytes = *int32Range
+	}
+	if downloadSettings.ReuseSettings != nil {
+		xmuxSettings, err := parseXHTTPXMUX(downloadSettings.ReuseSettings)
+		if err != nil {
+			return nil, err
+		}
+		xhttpSettings.Xmux = *xmuxSettings
+	}
+	streamSettings.XHTTPSettings = xhttpSettings
+
+	parseXHTTPDownloadSettingsSecurity(streamSettings, downloadSettings)
+
+	return streamSettings, nil
+}
+
+func parseXHTTPDownloadSettingsSecurity(streamSettings *conf.StreamConfig, proxy *ClashProxyXhttpOptsDownloadSettings) {
+	tlsSettings := &conf.TLSConfig{}
+	realitySettings := &conf.REALITYConfig{}
+
+	if proxy.Tls {
+		streamSettings.Security = "tls"
+	}
+
+	if proxy.EchOpts != nil {
+		if proxy.EchOpts.Enable {
+			tlsSettings.ECHConfigList = proxy.EchOpts.Config
+		}
+	}
+
+	if proxy.RealityOpts != nil {
+		streamSettings.Security = "reality"
+		realitySettings.PublicKey = proxy.RealityOpts.PublicKey
+		realitySettings.ShortId = proxy.RealityOpts.ShortId
+	}
+	if len(proxy.Servername) > 0 {
+		tlsSettings.ServerName = proxy.Servername
+		realitySettings.ServerName = proxy.Servername
+	}
+	if len(proxy.Alpn) > 0 {
+		tlsSettings.ALPN = new(conf.StringList(proxy.Alpn))
+	}
+	if len(proxy.Fingerprint) > 0 {
+		tlsSettings.Fingerprint = proxy.Fingerprint
+		realitySettings.Fingerprint = proxy.Fingerprint
+	}
+	if len(proxy.ClientFingerprint) > 0 {
+		tlsSettings.Fingerprint = proxy.ClientFingerprint
+		realitySettings.Fingerprint = proxy.ClientFingerprint
+	}
+
+	tlsSettings.AllowInsecure = proxy.SkipCertVerify
 
 	switch streamSettings.Security {
 	case "tls":

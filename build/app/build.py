@@ -48,9 +48,37 @@ class Builder(object):
     def download_geo(self):
         os.chdir(self.lib_dir)
         main_path = os.path.join("download_geo", "main.go")
-        ret = subprocess.run(["go", "run", main_path])
+        ret = subprocess.run(
+            ["go", "run", main_path],
+            capture_output=True,
+            text=True,
+        )
         if ret.returncode != 0:
+            if ret.stdout:
+                print("download_geo stdout:")
+                print(ret.stdout)
+            if ret.stderr:
+                print("download_geo stderr:")
+                print(ret.stderr)
             raise Exception("download_geo failed")
+        self.verify_geo_assets()
+
+    def verify_geo_assets(self):
+        dat_dir = os.path.join(self.lib_dir, "dat")
+        required_files = [
+            os.path.join(dat_dir, "geosite.dat"),
+            os.path.join(dat_dir, "geoip.dat"),
+            os.path.join(dat_dir, "timestamp.txt"),
+        ]
+        missing_or_empty = []
+        for file_path in required_files:
+            if not os.path.exists(file_path):
+                missing_or_empty.append(f"missing: {file_path}")
+                continue
+            if os.path.getsize(file_path) <= 0:
+                missing_or_empty.append(f"empty: {file_path}")
+        if missing_or_empty:
+            raise Exception("download_geo output validation failed: " + ", ".join(missing_or_empty))
 
     def prepare_gomobile(self):
         ret = subprocess.run(

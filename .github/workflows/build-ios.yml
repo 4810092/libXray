@@ -52,6 +52,10 @@ jobs:
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "version=${VERSION}-${SHORT_SHA}" >> $GITHUB_OUTPUT
 
+      - name: Sanity check Go compile
+        working-directory: libXray
+        run: go test ./... -run TestNonExistent -count=0
+
       - name: Build iOS (gomobile)
         working-directory: libXray
         run: python3 build/main.py apple gomobile

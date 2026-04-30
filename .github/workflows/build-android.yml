@@ -55,6 +55,10 @@ jobs:
           echo "version=${VERSION}-${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
 
+      - name: Sanity check Go compile
+        working-directory: libXray
+        run: go test ./... -run TestNonExistent -count=0
+
       - name: Build Android (API 21, поддержка 16KB page size)
         working-directory: libXray
         env:

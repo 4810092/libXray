@@ -1,0 +1,35 @@
+diff --git a/proxy/tun/tun_darwin.go b/proxy/tun/tun_darwin.go
+index ad9f478..f7a51cd 100644
+--- a/proxy/tun/tun_darwin.go
++++ b/proxy/tun/tun_darwin.go
+@@ -10,6 +10,7 @@ import (
+ 	"os"
+ 	"strconv"
+ 	"syscall"
++	"time"
+ 	"unsafe"
+ 
+ 	"github.com/xtls/xray-core/common/buf"
+@@ -34,9 +35,6 @@ const (
+ 	ND6_INFINITE_LIFETIME = 0xFFFFFFFF // netinet6/nd6.h
+ )
+ 
+-//go:linkname procyield runtime.procyield
+-func procyield(cycles uint32)
+-
+ type DarwinTun struct {
+ 	tunFile *os.File
+ 	options TunOptions
+@@ -168,9 +166,10 @@ func (t *DarwinTun) ReadPacket() (byte, *stack.PacketBuffer, error) {
+ 	}), nil
+ }
+ 
+-// Wait some cpu cycles
++// Wait briefly when the non-blocking utun queue is empty. A runtime procyield
++// spins continuously and can starve the iOS Network Extension event loop.
+ func (t *DarwinTun) Wait() {
+-	procyield(1)
++	time.Sleep(time.Millisecond)
+ }
+ 
+ func (t *DarwinTun) newEndpoint() (stack.LinkEndpoint, error) {

@@ -48,6 +48,12 @@ class Builder(object):
         )
         if ret.returncode != 0:
             raise Exception("git clone Xray-core failed")
+        patch_path = os.path.abspath(
+            os.path.join(self.build_dir, "patches", "xray-core-ios-tun-wait.patch")
+        )
+        ret = subprocess.run(["git", "apply", patch_path], cwd=xray_core_dir)
+        if ret.returncode != 0:
+            raise Exception("apply Xray-core iOS TUN wait patch failed")
 
     def init_go_env(self):
         os.chdir(self.lib_dir)

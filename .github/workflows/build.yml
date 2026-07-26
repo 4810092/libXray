@@ -35,11 +35,6 @@ jobs:
             arch: x64
             goarch: amd64
             artifact: windows-x64
-          - runner: windows-11-arm
-            target: windows
-            arch: arm64
-            goarch: arm64
-            artifact: windows-arm64
           - runner: macos-26
             target: apple
             artifact: apple-cgo

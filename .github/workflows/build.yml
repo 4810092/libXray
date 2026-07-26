@@ -43,6 +43,9 @@ jobs:
           - runner: macos-26
             target: apple
             artifact: apple-cgo
+          - runner: macos-26
+            target: apple-gomobile
+            artifact: apple-gomobile
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -88,7 +91,7 @@ jobs:
       # Apple toolchain
       # =========================
       - name: Select Xcode
-        if: matrix.target == 'apple'
+        if: startsWith(matrix.target, 'apple')
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -109,6 +112,7 @@ jobs:
 
       - name: Setup Android NDK
         if: matrix.target == 'android'
+        id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: ${{ env.NDK_VERSION }}
@@ -127,6 +131,29 @@ jobs:
         if: matrix.target == 'android'
         run: |
           python3 build/main.py android
+
+      - name: Verify Android native libraries
+        if: matrix.target == 'android'
+        env:
+          NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          aar_dir="$(mktemp -d)"
+          unzip -q libXray.aar -d "$aar_dir"
+          expected_abis="arm64-v8a armeabi-v7a x86 x86_64"
+          for abi in $expected_abis; do
+            test -f "$aar_dir/jni/$abi/libgojni.so"
+          done
+          readelf="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          while IFS= read -r library; do
+            while read -r alignment; do
+              if (( alignment < 0x4000 )); then
+                echo "$library has LOAD alignment $alignment, expected at least 0x4000"
+                exit 1
+              fi
+            done < <("$readelf" -lW "$library" | awk '$1 == "LOAD" { print $NF }')
+          done < <(find "$aar_dir/jni" -name '*.so' -type f)
 
       - name: Build Windows
         if: matrix.target == 'windows'
@@ -156,6 +183,21 @@ jobs:
         run: |
           python3 build/main.py apple go
 
+      - name: Build Apple with gomobile
+        if: matrix.target == 'apple-gomobile'
+        run: |
+          python3 build/main.py apple gomobile
+
+      - name: Verify Apple gomobile framework
+        if: matrix.target == 'apple-gomobile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f LibXray.xcframework/ios-arm64/LibXray.framework/LibXray
+          test -f LibXray.xcframework/ios-arm64_x86_64-simulator/LibXray.framework/LibXray
+          grep -q 'LibXrayInvoke' \
+            LibXray.xcframework/ios-arm64/LibXray.framework/Headers/LibXray.objc.h
+
       # =========================
       # Collect artifacts
       # =========================
@@ -181,6 +223,10 @@ jobs:
               cp libXray-sources.jar "dist/${{ matrix.artifact }}/"
               ;;
             apple)
+              mkdir -p "dist/${{ matrix.artifact }}"
+              cp -R LibXray.xcframework "dist/${{ matrix.artifact }}/"
+              ;;
+            apple-gomobile)
               mkdir -p "dist/${{ matrix.artifact }}"
               cp -R LibXray.xcframework "dist/${{ matrix.artifact }}/"
               ;;
@@ -216,6 +262,7 @@ jobs:
           for d in */ ; do
             zip -r "${d%/}.zip" "$d"
           done
+          sha256sum ./*.zip > SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -223,6 +270,8 @@ jobs:
           name: libXray ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           prerelease: true
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,11 +3,7 @@
 package libXray
 
 import (
-	"os"
-	"strconv"
-
 	c "github.com/xtls/libxray/controller"
-	"github.com/xtls/xray-core/common/platform"
 )
 
 // SocketProtector is a callback interface for iOS Network Extension socket protection.
@@ -15,14 +11,6 @@ import (
 // to bind the socket to the physical interface (en0/pdp_ip0), bypassing VPN routing.
 type SocketProtector interface {
 	ProtectFd(int) bool
-}
-
-func SetTunFd(fd int64) {
-	_ = os.Setenv(platform.TunFdKey, strconv.FormatInt(fd, 10))
-}
-
-func ClearTunFd() {
-	_ = os.Unsetenv(platform.TunFdKey)
 }
 
 func RegisterDialerController(controller SocketProtector) {

@@ -353,7 +353,7 @@ let package = Package(
 .github/
   workflows/
     build-android.yml    ← сборка Android
-    build-ios.yml        ← сборка iOS  
+    build-ios.yml        ← сборка iOS
     release.yml          ← публикация релиза
 version.txt              ← текущая версия (например: 0.0.1)
 ```

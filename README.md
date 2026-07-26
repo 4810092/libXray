@@ -10,6 +10,28 @@ This is a wrapper around [Xray-core](https://github.com/XTLS/Xray-core) to impro
 2. This repository does not guarantee API stability, you need to adapt it yourself.
 3. This repository is only compatible with the latest release of Xray-core.
 
+# Versioning
+
+Releases use CalVer in the form `v<YY>.<M>.<D>` (e.g. `v26.3.27` = 2026-03-27).
+Because Go modules require any module with major version `>= 2` to encode the
+major in its import path, every CalVer release is mirrored onto a Go-friendly
+SemVer tag on the same commit:
+
+| CalVer tag | Go-import tag |
+| ---------- | ------------- |
+| `v26.3.27` | `v1.260327.0` |
+
+Go consumers should pin against the SemVer mirror:
+
+```shell
+go get github.com/xtls/libxray@v1.260327.0
+```
+
+The mirror tag is created automatically by
+[`.github/workflows/release-go-mirror.yml`](./.github/workflows/release-go-mirror.yml)
+on every CalVer push. Existing CalVer tags can be backfilled with
+[`scripts/backfill-semver-tags.sh`](./scripts/backfill-semver-tags.sh).
+
 # Features
 
 ## build
@@ -18,21 +40,29 @@ Compile script. It is recommended to always use this script to compile libXray. 
 
 depends on git and go.
 
+By default, the build script does not clone [Xray-core](https://github.com/XTLS/Xray-core). It uses Go modules and pins Xray-core to release tag `v26.7.11` through its pseudo-version.
+Pass the optional `local` argument to use an existing local checkout at `../Xray-core` through a Go module `replace`.
+
 ### Usage
 
 ```shell
 # Android (min Android API level is 21)
 python3 build/main.py android
+python3 build/main.py android local
 
 # Apple (gomobile or go)
 python3 build/main.py apple gomobile
 python3 build/main.py apple go
+python3 build/main.py apple gomobile local
+python3 build/main.py apple go local
 
 # Linux
 python3 build/main.py linux
+python3 build/main.py linux local
 
 # Windows
 python3 build/main.py windows
+python3 build/main.py windows local
 
 ```
 
@@ -62,7 +92,8 @@ This works well when you use ffi for integration. For example, integration with 
 
 Support iOS, iOSSimulator, macOS, tvOS.
 
-Note: The product `LibXray.xcframework` does not contain **module.modulemap**. When using swift, you need to create a bridge file.
+The product `LibXray.xcframework` contains **module.modulemap**. When using
+Swift, import it as module `LibXray`.
 
 ### Linux
 
@@ -70,32 +101,132 @@ depend on gcc and g++.
 
 ### Windows
 
-depend on MinGW.
+Depends on gcc and g++ in `PATH`.
 
-you can use winget to install [LLVM MinGW](https://github.com/mstorsjo/llvm-mingw) or [WinLibs](https://github.com/brechtsanders/winlibs_mingw) .
+Native amd64 and arm64 builds are supported. The release workflow builds each
+architecture on its matching GitHub-hosted Windows runner.
 
-```shell
-winget install MartinStorsjo.LLVM-MinGW.UCRT
-winget install BrechtSanders.WinLibs.POSIX.UCRT
+## API
+
+libXray exposes a single structured entrypoint:
+
+```go
+func Invoke(requestJSON string) string
+```
+
+The C export is:
+
+```c
+char* CGoInvoke(char* requestJSON);
+void CGoFree(char* value);
+```
+
+`CGoInvoke` allocates its response. The caller must release every non-null
+response with `CGoFree`; do not use a platform allocator directly.
+
+The request is a JSON object:
+
+```json
+{
+  "apiVersion": 1,
+  "method": "runXray",
+  "payload": {
+    "configPath": "/path/to/config.json"
+  }
+}
+```
+
+The response is a JSON object:
+
+```json
+{
+  "success": true,
+  "data": {},
+  "error": ""
+}
+```
+
+Design notes:
+
+1. A top-level `env` field is ignored and has no effect. Xray-core runtime
+   environment options belong in the root `env` object of the Xray config.
+2. `SetTunFd` has been removed. When the fd is only known at runtime, write
+   `xray.tun.fd` into the Xray config root `env` object before calling
+   `runXray`.
+3. `countGeoData` is not backed by an Xray config, so its `datDir` is passed in
+   the method payload.
+4. The complete UTF-8 encoded Invoke request and response JSON envelopes are
+   limited to 16 MiB. If either limit is exceeded, Invoke returns a failure
+   response with `success: false`, `data: null`, and a size-limit error.
+5. `convertShareLinksToXrayJson` validates each parsed outbound with the current
+   Xray-core config builder. Invalid outbounds are omitted, and the method fails
+   if none remain. Validation does not create or start an Xray instance.
+
+Supported methods:
+
+```text
+getFreePorts
+convertShareLinksToXrayJson
+convertXrayJsonToShareLinks
+countGeoData
+ping
+testXray
+runXray
+runXrayFromJson
+stopXray
+xrayVersion
+getXrayState
 ```
 
 ## controller
 
+### Socket protect
+
 Used to solve the socket protect problem on Android.
 
-## dns
+### DNS resolver
 
-Used to solve server address resolution issues on Android, Linux, and Windows. If not handled, the DNS traffic will be resent to the tun device, resulting in failure to initiate a connection.
+Android may expose a loopback DNS server to Go's resolver while a VPN is
+active. Call `SetDNS` before `runXray` to make Go use the DNS server selected by
+the VPN configuration and protect the DNS socket from the VPN tunnel. The
+server must be an IP endpoint with a port, such as `8.8.8.8:53` or
+`[2001:4860:4860::8888]:53`.
+
+Call `ResetDNS` after Xray has stopped. These APIs are available only in the
+Android artifact and change the process-wide Go resolver.
+
+```java
+LibXray.setDNS(controller, "8.8.8.8:53");
+LibXray.invoke(runXrayRequest);
+
+// Later, when stopping the core:
+LibXray.invoke(stopXrayRequest);
+LibXray.resetDNS();
+```
+
+### Process finder (per-app routing)
+
+`ConnectivityManager.getConnectionOwnerUid()` is API 30+. On older Android
+libXray falls back to parsing `/proc/net/{tcp,udp}{,6}` in pure Go.
+
+Usage (Java/Kotlin):
+
+```java
+ProcessFinder finder = new ProcessFinder() {
+    @Override
+    public long findProcessByConnection(String network, String srcIP, long srcPort,
+                                         String destIP, long destPort) {
+        return -1; // return UID or -1
+    }
+};
+LibXray.registerProcessFinder(finder, Build.VERSION.SDK_INT);
+```
 
 ## geo
 
 ### count
 
 Read geo files and count the categories and rules.
-
-### read
-
-Read the Xray Json configuration and extract the geo file name used.
 
 ## main
 
@@ -114,10 +245,6 @@ Write data to a file.
 ### measure
 
 Speed ​​test the Xray configuration.
-
-### model
-
-The response body of the wrapper interface.
 
 ### port
 
@@ -155,15 +282,14 @@ Some tools used to parse shared links.
 
 Latency testing.
 
-### stats
+### metrics
 
 Refer to the following configuration:
 
 ```json
 {
   "metrics" : {
-    "tag" : "metrics",
-    "listen": "[::1]:49227",
+    "listen": "127.0.0.1:49227"
   },
   "policy" : {
     "system" : {
@@ -177,11 +303,18 @@ Refer to the following configuration:
 }
 ```
 
+The metrics server exposes the Xray runtime counters through HTTP. For example,
+when `listen` is `127.0.0.1:49227`, read:
+
+```text
+http://localhost:49227/debug/vars
+```
+
 Note:
 
 1. When testing latency or validating configuration, make sure `metrics` is `null`.
 
-2. When enabling metrics, the Xray-core instance needs to be run in a **child process**.
+2. Metrics only needs the `listen` field in this wrapper. Query `/debug/vars` directly with an HTTP client instead of going through libXray.
 
 ### validation
 
@@ -190,14 +323,6 @@ Verify the Xray configuration.
 ### xray
 
 Start and stop Xray instances.
-
-## nodep_wrapper
-
-export nodep.
-
-### xray_wrapper
-
-export xray.
 
 # Credits
 

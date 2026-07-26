@@ -68,10 +68,7 @@ func TestClashHysteria2_WithBandwidthPortHoppingSalamander(t *testing.T) {
 	assert.Equal(t, conf.Bandwidth("200 mbps"), qp.BrutalDown)
 
 	// UdpHop
-	var portList string
-	require.NoError(t, json.Unmarshal(qp.UdpHop.PortList, &portList))
-	assert.Equal(t, "20000-40000", portList)
-	require.NotNil(t, qp.UdpHop.Interval)
+	assert.Equal(t, "20000-40000", qp.UdpHop.PortList.String())
 	assert.Equal(t, int32(30), qp.UdpHop.Interval.From)
 	assert.Equal(t, int32(30), qp.UdpHop.Interval.To)
 
@@ -113,7 +110,7 @@ func TestClashHysteria2_BandwidthOnly(t *testing.T) {
 	assert.Empty(t, ss.FinalMask.Udp)
 
 	// No UdpHop
-	assert.Nil(t, qp.UdpHop.PortList)
+	assert.Empty(t, qp.UdpHop.PortList.Range)
 }
 
 func TestClashHysteria2_SalamanderOnly(t *testing.T) {
@@ -169,8 +166,7 @@ func TestClashShadowsocks_Plain(t *testing.T) {
     port: 8388
     cipher: aes-128-gcm
     password: secret
-    udp: true
-    udp-over-tcp: true`
+    udp: true`
 	cfg := parseClashYAML(t, yaml)
 	require.Len(t, cfg.OutboundConfigs, 1)
 	ob := cfg.OutboundConfigs[0]
@@ -179,7 +175,6 @@ func TestClashShadowsocks_Plain(t *testing.T) {
 	require.NoError(t, json.Unmarshal(*ob.Settings, &s))
 	assert.Equal(t, "aes-128-gcm", s.Cipher)
 	assert.Equal(t, "secret", s.Password)
-	assert.True(t, s.UoT)
 	assert.Nil(t, ob.StreamSetting)
 }
 

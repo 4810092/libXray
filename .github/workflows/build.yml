@@ -1,0 +1,290 @@
+name: Build libXray
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: build-libxray-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: r29
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux
+            arch: x64
+            artifact: linux-x64
+          - runner: ubuntu-24.04-arm
+            target: linux
+            arch: arm64
+            artifact: linux-arm64
+          - runner: ubuntu-24.04
+            target: android
+            artifact: android
+          - runner: windows-2022
+            target: windows
+            arch: x64
+            goarch: amd64
+            artifact: windows-x64
+          - runner: windows-11-arm
+            target: windows
+            arch: arm64
+            goarch: arm64
+            artifact: windows-arm64
+          - runner: macos-26
+            target: apple
+            artifact: apple-cgo
+          - runner: macos-26
+            target: apple-gomobile
+            artifact: apple-gomobile
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    env:
+      CGO_ENABLED: "1"
+
+    steps:
+      # =========================
+      # Checkout
+      # =========================
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      # =========================
+      # Python (build scripts)
+      # =========================
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+          check-latest: true
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+
+      # =========================
+      # Go setup
+      # =========================
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      # =========================
+      # Apple toolchain
+      # =========================
+      - name: Select Xcode
+        if: startsWith(matrix.target, 'apple')
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # =========================
+      # Android toolchain
+      # =========================
+      - name: Setup Java (Android)
+        if: matrix.target == 'android'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        if: matrix.target == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Android NDK
+        if: matrix.target == 'android'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+
+      # =========================
+      # Build steps
+      # =========================
+
+      - name: Build Linux
+        if: matrix.target == 'linux'
+        run: |
+          python3 build/main.py linux
+
+      - name: Build Android
+        if: matrix.target == 'android'
+        run: |
+          python3 build/main.py android
+
+      - name: Verify Android native libraries
+        if: matrix.target == 'android'
+        env:
+          NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          aar_dir="$(mktemp -d)"
+          unzip -q libXray.aar -d "$aar_dir"
+          expected_abis="arm64-v8a armeabi-v7a x86 x86_64"
+          for abi in $expected_abis; do
+            test -f "$aar_dir/jni/$abi/libgojni.so"
+          done
+          readelf="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          while IFS= read -r library; do
+            while read -r alignment; do
+              if (( alignment < 0x4000 )); then
+                echo "$library has LOAD alignment $alignment, expected at least 0x4000"
+                exit 1
+              fi
+            done < <("$readelf" -lW "$library" | awk '$1 == "LOAD" { print $NF }')
+          done < <(find "$aar_dir/jni" -name '*.so' -type f)
+
+      - name: Build Windows
+        if: matrix.target == 'windows'
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          python build/main.py windows
+
+      - name: Verify Windows architecture
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("windows_dll/libXray.dll")
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          $expected = switch ("${{ matrix.arch }}") {
+            "x64" { 0x8664 }
+            "arm64" { 0xaa64 }
+            default { throw "unsupported Windows architecture: ${{ matrix.arch }}" }
+          }
+          if ($machine -ne $expected) {
+            throw ("unexpected PE machine 0x{0:X4}; expected 0x{1:X4}" -f $machine, $expected)
+          }
+
+      - name: Build Apple (macOS/iOS)
+        if: matrix.target == 'apple'
+        run: |
+          python3 build/main.py apple go
+
+      - name: Build Apple with gomobile
+        if: matrix.target == 'apple-gomobile'
+        run: |
+          python3 build/main.py apple gomobile
+
+      - name: Verify Apple gomobile framework
+        if: matrix.target == 'apple-gomobile'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f LibXray.xcframework/ios-arm64/LibXray.framework/LibXray
+          test -f LibXray.xcframework/ios-arm64_x86_64-simulator/LibXray.framework/LibXray
+          grep -q 'LibXrayInvoke' \
+            LibXray.xcframework/ios-arm64/LibXray.framework/Headers/LibXray.objc.h
+
+      # =========================
+      # Collect artifacts
+      # =========================
+      - name: Package artifacts
+        shell: bash
+        run: |
+          set -e
+
+          case "${{ matrix.target }}" in
+            linux)
+              mkdir -p "dist/${{ matrix.artifact }}"
+              cp linux_so/libXray.so "dist/${{ matrix.artifact }}/"
+              cp linux_so/libXray.h "dist/${{ matrix.artifact }}/"
+              ;;
+            windows)
+              mkdir -p "dist/${{ matrix.artifact }}"
+              cp windows_dll/libXray.dll "dist/${{ matrix.artifact }}/"
+              cp windows_dll/libXray.h "dist/${{ matrix.artifact }}/"
+              ;;
+            android)
+              mkdir -p "dist/${{ matrix.artifact }}"
+              cp libXray.aar "dist/${{ matrix.artifact }}/"
+              cp libXray-sources.jar "dist/${{ matrix.artifact }}/"
+              ;;
+            apple)
+              mkdir -p "dist/${{ matrix.artifact }}"
+              cp -R LibXray.xcframework "dist/${{ matrix.artifact }}/"
+              ;;
+            apple-gomobile)
+              mkdir -p "dist/${{ matrix.artifact }}"
+              cp -R LibXray.xcframework "dist/${{ matrix.artifact }}/"
+              ;;
+          esac
+
+      # =========================
+      # Upload artifacts
+      # =========================
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: libxray-${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}/
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: libxray-*
+          path: dist/
+          merge-multiple: false
+
+      - name: Zip each platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          for d in */ ; do
+            zip -r "${d%/}.zip" "$d"
+          done
+
+          android_aar="$(find libxray-android -name 'libXray.aar' -type f -print -quit)"
+          apple_framework="$(find libxray-apple-gomobile -name 'LibXray.xcframework' -type d -print -quit)"
+          test -n "$android_aar"
+          test -n "$apple_framework"
+          cp "$android_aar" libXray.aar
+          (
+            cd "$(dirname "$apple_framework")"
+            zip -r "$GITHUB_WORKSPACE/dist/LibXray.xcframework.zip" LibXray.xcframework
+          )
+          sha256sum ./*.zip ./libXray.aar > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: libXray ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          prerelease: true
+          files: |
+            dist/*.zip
+            dist/libXray.aar
+            dist/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

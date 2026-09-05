@@ -96,6 +96,22 @@ for required in ('refs/tags/${{ inputs.calver_tag }}', '^{commit}', 'exit 1', 'n
     if required not in mirror:
         raise SystemExit(f"mirror workflow lacks strict tag validation: {required}")
 
+build = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+for required in (
+    "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+    "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+    "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+    "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90",
+    "actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961",
+    "android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407",
+    "nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779",
+    "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    "go-version-file: go.mod",
+    "check-latest: false",
+):
+    if required not in build:
+        raise SystemExit(f"build workflow lacks pinned toolchain/action setting: {required}")
+
 linux_abi = Path("scripts/validate-linux-c-abi.sh").read_text(encoding="utf-8")
 for required in (
     "golang:1.26.3@sha256:3bf5b04541eb4a37fe62aa1bc9c98a1dec09db9d2e79c1d2eb54e3c9d08dbca9",

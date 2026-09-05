@@ -76,7 +76,10 @@ if [[ "${1:-}" == "--sanitized-env-check" && "$#" -eq 1 ]]; then
   /usr/bin/env | LC_ALL=C sort
   exit 0
 fi
-if [[ "${1:-}" != "--pre-push" || "$#" -ne 3 ]]; then
+cleanup_self_test=0
+if [[ "${1:-}" == "--cleanup-self-test" && "$#" -eq 1 ]]; then
+  cleanup_self_test=1
+elif [[ "${1:-}" != "--pre-push" || "$#" -ne 3 ]]; then
   usage >&2
   exit 2
 fi
@@ -88,6 +91,7 @@ cd "$repo_root"
 updates_file="$(mktemp "${TMPDIR}/libxray-pre-push-updates.XXXXXX")"
 scratch_root=""
 worktree=""
+attestation_note=""
 lock_dir="$git_common_dir/libxray-local-pre-push.lock"
 lock_owned=0
 worktree_created=0
@@ -96,22 +100,60 @@ cleanup() {
   local cleanup_failed=0
   set +e
   if [[ "$worktree_created" -eq 1 ]]; then
-    git -C "$repo_root" worktree remove --force "$worktree" >/dev/null 2>&1 || cleanup_failed=1
+    if git -C "$repo_root" worktree remove --force "$worktree" >/dev/null 2>&1; then
+      worktree_created=0
+    else
+      cleanup_failed=1
+    fi
+  fi
+  if [[ -n "$attestation_note" ]]; then
+    if [[ "$attestation_note" == "$scratch_root/local-ci-attestation.json" ]] && rm -f -- "$attestation_note"; then
+      attestation_note=""
+    else
+      cleanup_failed=1
+    fi
   fi
   if [[ -n "$scratch_root" ]]; then
-    rmdir "$scratch_root" >/dev/null 2>&1 || cleanup_failed=1
+    if rmdir "$scratch_root" >/dev/null 2>&1; then
+      scratch_root=""
+    else
+      cleanup_failed=1
+    fi
   fi
-  rm -f "$updates_file" >/dev/null 2>&1 || cleanup_failed=1
+  if [[ -n "$updates_file" ]]; then
+    if rm -f "$updates_file" >/dev/null 2>&1; then
+      updates_file=""
+    else
+      cleanup_failed=1
+    fi
+  fi
   if [[ "$lock_owned" -eq 1 ]]; then
-    [[ "$(cat "$lock_dir/pid" 2>/dev/null)" == "$$" ]] || cleanup_failed=1
-    rm -f "$lock_dir/pid" >/dev/null 2>&1 || cleanup_failed=1
-    rmdir "$lock_dir" >/dev/null 2>&1 || cleanup_failed=1
+    if [[ "$(cat "$lock_dir/pid" 2>/dev/null)" == "$$" ]] \
+      && rm -f "$lock_dir/pid" >/dev/null 2>&1 \
+      && rmdir "$lock_dir" >/dev/null 2>&1; then
+      lock_owned=0
+    else
+      cleanup_failed=1
+    fi
   fi
   if [[ "$cleanup_failed" -ne 0 ]]; then
     echo "local pre-push CI: cleanup failed; refusing success" >&2
     return 1
   fi
 }
+
+if [[ "$cleanup_self_test" -eq 1 ]]; then
+  scratch_root="$(mktemp -d "${TMPDIR}/libxray-pre-push-cleanup.XXXXXX")"
+  attestation_note="$scratch_root/local-ci-attestation.json"
+  printf '%s\n' regression >"$attestation_note"
+  test_root="$scratch_root"
+  cleanup
+  [[ -z "$scratch_root" && -z "$attestation_note" && -z "$updates_file" && ! -e "$test_root" ]] || {
+    echo "local pre-push CI: attestation cleanup regression" >&2
+    exit 1
+  }
+  exit 0
+fi
 
 on_exit() {
   local status=$?

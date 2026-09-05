@@ -24,6 +24,7 @@ for script in \
 done
 test -x .githooks/pre-push || { echo "not executable: .githooks/pre-push" >&2; exit 1; }
 bash -n .githooks/pre-push
+scripts/local-pre-push-ci.sh --cleanup-self-test
 
 if printf '%s\n' \
   'refs/tags/v26.7.11 1111111111111111111111111111111111111111 refs/tags/v26.7.11 0000000000000000000000000000000000000000' \

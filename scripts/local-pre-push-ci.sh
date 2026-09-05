@@ -180,6 +180,7 @@ git -C "$worktree" diff --check "$diff_base" "$local_sha"
   go test -race ./... -count=1 -timeout 15m
   go vet ./...
 )
+"$worktree/scripts/validate-linux-c-abi.sh"
 assert_exact_clean_worktree
 
 echo "local pre-push CI passed for $local_ref at $local_sha"

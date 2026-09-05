@@ -26,6 +26,15 @@ variables are therefore unavailable to the checks. The gate never performs
 remote Git operations, uploads, tags, or releases. Go may download
 already-declared modules when they are absent from the local module cache.
 
+Docker Desktop is also required. The Linux C ABI check uses the exact public
+`golang:1.26.3@sha256:3bf5b04541eb4a37fe62aa1bc9c98a1dec09db9d2e79c1d2eb54e3c9d08dbca9`
+linux/amd64 manifest. It runs with an empty temporary `DOCKER_CONFIG`, a
+read-only source mount, `--rm`, and a temporary output mount; unavailable
+Docker, daemon, image, or build fails the push. It builds
+`./cgo_bridge` with read-only modules, trimmed paths, VCS stamping disabled,
+and an empty Go build ID, then verifies both the `CGoFree` declaration and
+exported ELF symbol.
+
 ## Exact checks
 
 For one non-deletion branch update per `git push`, the hook runs:
@@ -36,6 +45,7 @@ actionlint
 go test ./... -count=1 -timeout 15m
 go test -race ./... -count=1 -timeout 15m
 go vet ./...
+scripts/validate-linux-c-abi.sh
 ```
 
 Multiple branch updates, tags, deletes, unresolved or non-ancestor remote
@@ -53,16 +63,12 @@ scripts/test-local-pre-push-ci.sh
 
 ## Platform builds remain separate
 
-Android and Apple artifact builds are intentionally excluded. The current build
-code fetches geo data, mutates `go.mod`/`go.sum` during preparation, resolves
-`gomobile` at `@latest`, and does not pin an exact Android NDK toolchain.
-Running those builds from a shared checkout is therefore not a safe
-pre-push-gate operation. Linux C-ABI output is also a platform artifact/release
-gate: the current Linux builder does not select a pinned Linux cross-toolchain,
-so on Darwin it cannot truthfully verify an ELF `libXray.so`. A future platform
-gate must first pin Go, gomobile, NDK, Linux C toolchain, Xray-core input, and
-geo-data input, then run only in a disposable worktree with artifact outputs
-outside the source tree.
+Android and Apple artifact builds remain tag/release gates, not routine push
+CI. The current build code fetches geo data, mutates `go.mod`/`go.sum` during
+preparation, resolves `gomobile` at `@latest`, and does not pin an exact
+Android NDK toolchain. A future release gate must first pin Go, gomobile, NDK,
+Xray-core input, and geo-data input, then run only in a disposable worktree
+with artifact outputs outside the source tree.
 
 GitHub workflows are manual `workflow_dispatch` entry points. `build.yml`
 uploads manual build artifacts only; its unreachable tag-release job was

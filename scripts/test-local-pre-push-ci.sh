@@ -9,6 +9,7 @@ cd "$repo_root"
 for script in \
   scripts/check-local-pre-push-prereqs.sh \
   scripts/local-pre-push-ci.sh \
+  scripts/validate-linux-c-abi.sh \
   scripts/install-pre-push-hook.sh; do
   test -x "$script" || { echo "not executable: $script" >&2; exit 1; }
   bash -n "$script"
@@ -62,6 +63,7 @@ for required in (
     "go test ./... -count=1 -timeout 15m",
     "go test -race ./... -count=1 -timeout 15m",
     "go vet ./...",
+    'scripts/validate-linux-c-abi.sh',
     "git merge-base --is-ancestor",
     "assert_exact_clean_worktree",
 ):
@@ -76,6 +78,19 @@ mirror = Path(".github/workflows/release-go-mirror.yml").read_text(encoding="utf
 for required in ('refs/tags/${{ inputs.calver_tag }}', '^{commit}', 'exit 1'):
     if required not in mirror:
         raise SystemExit(f"mirror workflow lacks strict tag validation: {required}")
+
+linux_abi = Path("scripts/validate-linux-c-abi.sh").read_text(encoding="utf-8")
+for required in (
+    "golang:1.26.3@sha256:3bf5b04541eb4a37fe62aa1bc9c98a1dec09db9d2e79c1d2eb54e3c9d08dbca9",
+    "linux/amd64",
+    "--config \"$docker_config\"",
+    "readonly",
+    "--rm",
+    "-mod=readonly -trimpath -buildvcs=false -ldflags=-buildid= -buildmode=c-shared",
+    "CGoFree",
+):
+    if required not in linux_abi:
+        raise SystemExit(f"Linux C ABI validator lacks: {required}")
 PY
 
 echo "local pre-push CI structural test passed"

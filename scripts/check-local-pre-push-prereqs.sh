@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 
-# Check only the tools used by the deterministic, source-only pre-push gate.
-# Platform artifact builds deliberately have separate prerequisites and are not
-# part of this hook.
+# Check only the tools used by the deterministic local pre-push gate.
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" ]]; then
   cat <<'USAGE'
 Usage: scripts/check-local-pre-push-prereqs.sh
 
-Checks the exact Go toolchain declared in go.mod plus git and actionlint.
-It performs no network access and does not modify the working tree.
+Checks the exact Go toolchain declared in go.mod plus git, actionlint, and a
+reachable Docker Desktop daemon for the pinned Linux amd64 C ABI validation.
+It does not modify the working tree.
 USAGE
   exit 0
 fi
@@ -28,6 +27,11 @@ require_command() {
 require_command git
 require_command go
 require_command actionlint
+require_command docker
+docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
+  echo "Docker daemon is unavailable" >&2
+  exit 1
+}
 
 expected_go="$(awk '$1 == "go" { print $2; exit }' go.mod)"
 if [[ ! "$expected_go" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

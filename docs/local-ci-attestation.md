@@ -25,8 +25,9 @@ The installer records only the absolute key path and identity in local Git
 configuration. It does not add the key to the repository or to a global hooks
 directory.
 
-Configure the corresponding public key in the GitHub Actions secret
-`EKHO_LOCAL_CI_ALLOWED_SIGNERS`, in OpenSSH `allowed_signers` form:
+Configure the corresponding public key in the `release-attestation` GitHub
+environment secret `EKHO_LOCAL_CI_ALLOWED_SIGNERS`, in OpenSSH
+`allowed_signers` form. Restrict that environment to the `main` branch:
 
 ```text
 ekhovpn-local-ci ssh-ed25519 AAAA... local-ci-attestation

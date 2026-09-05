@@ -14,6 +14,7 @@ runs:
         ATTESTATION_IDENTITY: ${{ inputs.identity }}
       run: |
         set -euo pipefail
+        test "$GITHUB_REF" = refs/heads/main
         [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
         test -n "${EKHOVPN_LOCAL_CI_ALLOWED_SIGNERS:-}"
         umask 077

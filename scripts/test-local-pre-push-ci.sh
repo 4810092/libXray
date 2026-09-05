@@ -86,12 +86,12 @@ if ("core.hooksPath .githooks" not in installer or ".git/hooks" in installer
     raise SystemExit("installer does not configure only the tracked hook path")
 
 action = Path(".github/actions/verify-local-ci-attestation/action.yml").read_text(encoding="utf-8")
-for required in ("EKHOVPN_LOCAL_CI_ALLOWED_SIGNERS", "refs/notes/ekhovpn-local-ci/v1", "--expected-sha \"$GITHUB_SHA\""):
+for required in ("EKHOVPN_LOCAL_CI_ALLOWED_SIGNERS", "refs/notes/ekhovpn-local-ci/v1", "--expected-sha \"$GITHUB_SHA\"", 'test "$GITHUB_REF" = refs/heads/main'):
     if required not in action:
         raise SystemExit(f"attestation action lacks: {required}")
 
 mirror = Path(".github/workflows/release-go-mirror.yml").read_text(encoding="utf-8")
-for required in ('refs/tags/${{ inputs.calver_tag }}', '^{commit}', 'exit 1'):
+for required in ('refs/tags/${{ inputs.calver_tag }}', '^{commit}', 'exit 1', 'name: release-attestation', 'needs: local_ci_attestation'):
     if required not in mirror:
         raise SystemExit(f"mirror workflow lacks strict tag validation: {required}")
 

@@ -1,0 +1,34 @@
+name: Verify local CI attestation
+description: Verify the exact workflow SHA has a trusted signed local-CI Git note.
+inputs:
+  identity:
+    description: SSH allowed-signers identity for the local-CI signer.
+    required: false
+    default: ekhovpn-local-ci
+runs:
+  using: composite
+  steps:
+    - name: Fetch and verify exact local-CI note
+      shell: bash
+      env:
+        ATTESTATION_IDENTITY: ${{ inputs.identity }}
+      run: |
+        set -euo pipefail
+        [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+        test -n "${EKHOVPN_LOCAL_CI_ALLOWED_SIGNERS:-}"
+        umask 077
+        work="$RUNNER_TEMP/libxray-local-ci-attestation"
+        rm -rf -- "$work"
+        install -d -m 0700 "$work"
+        trap 'rm -rf -- "$work"' EXIT
+        signers="$work/allowed-signers"
+        note="$work/note.json"
+        printf '%s\n' "$EKHOVPN_LOCAL_CI_ALLOWED_SIGNERS" > "$signers"
+        chmod 0600 "$signers"
+        git fetch --no-tags --depth=1 origin \
+          +refs/notes/ekhovpn-local-ci/v1:refs/notes/ekhovpn-local-ci/v1
+        git notes --ref refs/notes/ekhovpn-local-ci/v1 show "$GITHUB_SHA" > "$note"
+        chmod 0600 "$note"
+        python3 scripts/verify_local_ci_attestation.py \
+          --repo "$GITHUB_WORKSPACE" --note "$note" --allowed-signers "$signers" \
+          --expected-sha "$GITHUB_SHA" --identity "$ATTESTATION_IDENTITY"

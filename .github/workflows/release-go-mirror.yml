@@ -27,8 +27,25 @@ on:
         type: string
 
 jobs:
+  local_ci_attestation:
+    name: Verify exact local CI attestation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact workflow source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Verify signed local gate
+        uses: ./.github/actions/verify-local-ci-attestation
+        env:
+          EKHOVPN_LOCAL_CI_ALLOWED_SIGNERS: ${{ secrets.EKHO_LOCAL_CI_ALLOWED_SIGNERS }}
+
   mirror:
     name: Mirror CalVer tag to v1.YYMMDD.N
+    needs: local_ci_attestation
     runs-on: ubuntu-latest
     permissions:
       contents: write

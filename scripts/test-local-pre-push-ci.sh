@@ -15,6 +15,13 @@ for script in \
   bash -n "$script"
   "$script" --help >/dev/null
 done
+for script in \
+  scripts/local_ci_attestation.py \
+  scripts/write_local_ci_attestation.py \
+  scripts/verify_local_ci_attestation.py; do
+  test -x "$script" || { echo "not executable: $script" >&2; exit 1; }
+  python3 -m py_compile "$script"
+done
 test -x .githooks/pre-push || { echo "not executable: .githooks/pre-push" >&2; exit 1; }
 bash -n .githooks/pre-push
 
@@ -66,13 +73,22 @@ for required in (
     'scripts/validate-linux-c-abi.sh',
     "git merge-base --is-ancestor",
     "assert_exact_clean_worktree",
+    "write_local_ci_attestation.py",
+    "refs/notes/ekhovpn-local-ci/v1",
+    "push --no-verify",
 ):
     if required not in driver:
         raise SystemExit(f"pre-push driver lacks: {required}")
 
 installer = Path("scripts/install-pre-push-hook.sh").read_text(encoding="utf-8")
-if "core.hooksPath .githooks" not in installer or ".git/hooks" in installer:
+if ("core.hooksPath .githooks" not in installer or ".git/hooks" in installer
+        or "libxray.localCiAttestationKey" not in installer):
     raise SystemExit("installer does not configure only the tracked hook path")
+
+action = Path(".github/actions/verify-local-ci-attestation/action.yml").read_text(encoding="utf-8")
+for required in ("EKHOVPN_LOCAL_CI_ALLOWED_SIGNERS", "refs/notes/ekhovpn-local-ci/v1", "--expected-sha \"$GITHUB_SHA\""):
+    if required not in action:
+        raise SystemExit(f"attestation action lacks: {required}")
 
 mirror = Path(".github/workflows/release-go-mirror.yml").read_text(encoding="utf-8")
 for required in ('refs/tags/${{ inputs.calver_tag }}', '^{commit}', 'exit 1'):
@@ -92,5 +108,20 @@ for required in (
     if required not in linux_abi:
         raise SystemExit(f"Linux C ABI validator lacks: {required}")
 PY
+
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/libxray-attestation-test.XXXXXX")"
+cleanup() { rm -rf -- "$scratch"; }
+trap cleanup EXIT
+key="$scratch/key"
+allowed="$scratch/allowed-signers"
+note="$scratch/note.json"
+ssh-keygen -q -t ed25519 -N '' -f "$key"
+chmod 0600 "$key"
+printf 'ekhovpn-local-ci %s\n' "$(cat "$key.pub")" > "$allowed"
+chmod 0600 "$allowed"
+head_sha="$(git rev-parse HEAD)"
+base_sha="$(git rev-parse HEAD^)"
+python3 scripts/write_local_ci_attestation.py --repo "$repo_root" --commit "$head_sha" --base "$base_sha" --key "$key" --identity ekhovpn-local-ci --output "$note"
+python3 scripts/verify_local_ci_attestation.py --repo "$repo_root" --note "$note" --allowed-signers "$allowed" --expected-sha "$head_sha" --identity ekhovpn-local-ci
 
 echo "local pre-push CI structural test passed"

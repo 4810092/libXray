@@ -7,8 +7,10 @@ if [[ "${1:-}" == "--help" ]]; then
   cat <<'USAGE'
 Usage: scripts/check-local-pre-push-prereqs.sh
 
-Checks the exact Go toolchain declared in go.mod plus git, actionlint, and a
-reachable Docker Desktop daemon for the pinned Linux amd64 C ABI validation.
+Checks the exact Go toolchain declared in go.mod plus git, Python, OpenSSH,
+actionlint, and a reachable Docker Desktop daemon for the pinned Linux amd64 C
+ABI validation and SSHSIG local-CI attestation. It does not modify the working
+tree.
 It does not modify the working tree.
 USAGE
   exit 0
@@ -26,6 +28,8 @@ require_command() {
 
 require_command git
 require_command go
+require_command python3
+require_command ssh-keygen
 require_command actionlint
 require_command docker
 docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || {
@@ -45,4 +49,4 @@ if [[ "$actual_go" != "go$expected_go" ]]; then
   exit 1
 fi
 
-echo "local pre-push prerequisites satisfied: $actual_go, $(actionlint -version | head -n 1)"
+echo "local pre-push prerequisites satisfied: $actual_go, $(actionlint -version | head -n 1), SSHSIG signer available"

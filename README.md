@@ -47,6 +47,11 @@ GitHub build and release workflows are manual-only. See
 [`docs/local-pre-push-ci.md`](./docs/local-pre-push-ci.md) for scope and
 platform-build limits.
 
+The manual workflow that creates a remote Go-module mirror tag additionally
+requires a signed local-CI attestation for its exact workflow SHA. See
+[`docs/local-ci-attestation.md`](./docs/local-ci-attestation.md) for initial
+key setup and recovery.
+
 # Features
 
 ## build

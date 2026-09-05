@@ -14,16 +14,18 @@ the tracked `.githooks` directory; it does not write an unversioned hook under
 
 ```sh
 scripts/check-local-pre-push-prereqs.sh
-scripts/install-pre-push-hook.sh
+scripts/install-pre-push-hook.sh --attestation-key /absolute/path/to/private-ed25519-key
 ```
 
 The required Go toolchain must exactly match the patch version in `go.mod`.
-`git`, `go`, and `actionlint` are the only required tools. Before invoking
+`git`, `go`, `python3`, `ssh-keygen`, and `actionlint` are required tools. Before invoking
 them, the runner re-execs through `env -i`. It preserves only validated `HOME`,
 `PATH`, `TMPDIR`, `LANG`, `USER`, and `SHELL`, and forces noninteractive Git
 pagers/prompts. Cloud, proxy, signing, store, token, and password environment
-variables are therefore unavailable to the checks. The gate never performs
-remote Git operations, uploads, tags, or releases. Go may download
+variables are therefore unavailable to the checks. Only after every local
+check passes, the hook uses its separately configured private SSHSIG key to
+publish a signed Git note for the exact SHA; it does not upload artifacts,
+create tags, or create releases. Go may download
 already-declared modules when they are absent from the local module cache.
 
 Docker Desktop is also required. The Linux C ABI check uses the exact public
@@ -47,6 +49,12 @@ go test -race ./... -count=1 -timeout 15m
 go vet ./...
 scripts/validate-linux-c-abi.sh
 ```
+
+After the checks pass, the hook signs the exact SHA and full gate-manifest
+digest and publishes `refs/notes/ekhovpn-local-ci/v1` before the branch is
+pushed. The manual Go module mirror workflow rejects a missing or invalid
+note. Details, trust setup, and key rotation are in
+[`local-ci-attestation.md`](./local-ci-attestation.md).
 
 Multiple branch updates, tags, deletes, unresolved or non-ancestor remote
 bases, concurrent runs, and toolchain mismatches fail closed. A stale lock is

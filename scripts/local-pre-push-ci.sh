@@ -12,7 +12,9 @@ Usage:
 Read standard pre-push ref updates from stdin. Only one non-deletion branch
 update is accepted. The gate validates its exact local commit in a detached
 temporary worktree and fails closed for unsupported refs, divergent remote
-bases, missing objects, concurrent runs, or toolchain mismatches.
+bases, missing objects, concurrent runs, or toolchain mismatches.  After a
+PASS it signs that exact SHA and publishes a Git note before Git pushes the
+branch, so provider-side mutation workflows can independently verify it.
 USAGE
 }
 
@@ -182,5 +184,26 @@ git -C "$worktree" diff --check "$diff_base" "$local_sha"
 )
 "$worktree/scripts/validate-linux-c-abi.sh"
 assert_exact_clean_worktree
+
+attestation_key="$(git -C "$repo_root" config --file "$git_common_dir/config" --get libxray.localCiAttestationKey || true)"
+attestation_identity="$(git -C "$repo_root" config --file "$git_common_dir/config" --get libxray.localCiAttestationIdentity || true)"
+[[ "$attestation_key" == /* && -n "$attestation_identity" ]] || fail "run scripts/install-pre-push-hook.sh with an attestation key first"
+attestation_note_ref="refs/notes/ekhovpn-local-ci/v1"
+attestation_note="$scratch_root/local-ci-attestation.json"
+python3 "$worktree/scripts/write_local_ci_attestation.py" \
+  --repo "$worktree" \
+  --commit "$local_sha" \
+  --base "$diff_base" \
+  --key "$attestation_key" \
+  --identity "$attestation_identity" \
+  --output "$attestation_note"
+if git -C "$repo_root" notes --ref "$attestation_note_ref" show "$local_sha" >/dev/null 2>&1; then
+  fail "refusing to replace an existing local-CI attestation"
+fi
+git -C "$repo_root" notes --ref "$attestation_note_ref" add -F "$attestation_note" "$local_sha"
+if ! git -C "$repo_root" push --no-verify "$2" "$attestation_note_ref:$attestation_note_ref"; then
+  git -C "$repo_root" notes --ref "$attestation_note_ref" remove "$local_sha" >/dev/null 2>&1 || true
+  fail "attestation note publication failed"
+fi
 
 echo "local pre-push CI passed for $local_ref at $local_sha"

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+# Validate the exact branch commit Git is about to push.
+set -euo pipefail
+repo_root="$(git rev-parse --show-toplevel)"
+exec "$repo_root/scripts/local-pre-push-ci.sh" --pre-push "$@"

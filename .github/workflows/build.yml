@@ -2,9 +2,6 @@ name: Build libXray
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 concurrency:
   group: build-libxray-${{ github.ref }}
@@ -236,50 +233,3 @@ jobs:
           name: libxray-${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}/
           if-no-files-found: error
-
-  release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v7
-        with:
-          pattern: libxray-*
-          path: dist/
-          merge-multiple: false
-
-      - name: Zip each platform
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd dist
-          for d in */ ; do
-            zip -r "${d%/}.zip" "$d"
-          done
-
-          android_aar="$(find libxray-android -name 'libXray.aar' -type f -print -quit)"
-          apple_framework="$(find libxray-apple-gomobile -name 'LibXray.xcframework' -type d -print -quit)"
-          test -n "$android_aar"
-          test -n "$apple_framework"
-          cp "$android_aar" libXray.aar
-          (
-            cd "$(dirname "$apple_framework")"
-            zip -r "$GITHUB_WORKSPACE/dist/LibXray.xcframework.zip" LibXray.xcframework
-          )
-          sha256sum ./*.zip ./libXray.aar > SHA256SUMS
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: libXray ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          prerelease: true
-          files: |
-            dist/*.zip
-            dist/libXray.aar
-            dist/SHA256SUMS
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

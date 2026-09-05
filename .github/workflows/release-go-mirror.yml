@@ -15,12 +15,16 @@ name: Go module mirror tag
 # on a stable major. The CalVer tag remains the human-readable canonical
 # release; the v1.* tag is purely for `go get`.
 #
-# This workflow listens for CalVer pushes and creates the matching v1.* tag.
+# An operator dispatches this workflow for a CalVer tag to create the matching
+# v1.* Go-import tag.
 
 on:
-  push:
-    tags:
-      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      calver_tag:
+        description: "Existing CalVer tag to mirror as a Go-import tag"
+        required: true
+        type: string
 
 jobs:
   mirror:
@@ -32,29 +36,37 @@ jobs:
       - name: Checkout (full history + tags)
         uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.calver_tag }}
           fetch-depth: 0
           fetch-tags: true
 
       - name: Compute and push mirror tag
         env:
-          GH_REF: ${{ github.ref }}
+          GH_REF: refs/tags/${{ inputs.calver_tag }}
         run: |
           set -euo pipefail
           CAL="${GH_REF#refs/tags/}"
-          # Skip if this push is itself a v1.* tag (avoid recursion).
+          # This is an explicit CalVer-only dispatch. A v1.* input is an
+          # operator error, not a successful no-op.
           case "$CAL" in
-            v1.*) echo "skip: $CAL is already a Go-import tag"; exit 0 ;;
+            v1.*) echo "error: $CAL is already a Go-import tag" >&2; exit 1 ;;
           esac
 
           # Parse vYY.M.D. Reject anything that is not three numeric parts
           # in plausible CalVer ranges (YY >= 20, M 1-12, D 1-31).
           IFS=. read -r Y M D <<<"${CAL#v}"
           if ! [[ "$Y" =~ ^[0-9]+$ && "$M" =~ ^[0-9]+$ && "$D" =~ ^[0-9]+$ ]]; then
-            echo "skip: $CAL is not numeric vYY.M.D"; exit 0
+            echo "error: $CAL is not numeric vYY.M.D" >&2; exit 1
           fi
           if [ "$Y" -lt 20 ] || [ "$M" -lt 1 ] || [ "$M" -gt 12 ] || [ "$D" -lt 1 ] || [ "$D" -gt 31 ]; then
-            echo "skip: $CAL is outside CalVer range (legacy semver tag?)"; exit 0
+            echo "error: $CAL is outside CalVer range" >&2; exit 1
           fi
+
+          tag_commit="$(git rev-parse -q --verify "refs/tags/${CAL}^{commit}")" \
+            || { echo "error: missing tag $CAL" >&2; exit 1; }
+          head_commit="$(git rev-parse HEAD)"
+          [ "$tag_commit" = "$head_commit" ] \
+            || { echo "error: checkout HEAD does not match $CAL" >&2; exit 1; }
 
           MMDD=$(printf '%02d%02d' "$M" "$D")
           BASE="v1.${Y}${MMDD}"

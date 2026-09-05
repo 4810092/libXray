@@ -27,10 +27,25 @@ Go consumers should pin against the SemVer mirror:
 go get github.com/xtls/libxray@v1.260327.0
 ```
 
-The mirror tag is created automatically by
-[`.github/workflows/release-go-mirror.yml`](./.github/workflows/release-go-mirror.yml)
-on every CalVer push. Existing CalVer tags can be backfilled with
+The mirror tag is created by
+[`release-go-mirror.yml`](./.github/workflows/release-go-mirror.yml)
+when an operator manually dispatches it for an existing CalVer tag. Existing
+CalVer tags can be backfilled with
 [`scripts/backfill-semver-tags.sh`](./scripts/backfill-semver-tags.sh).
+
+## Local pre-push CI
+
+Install the versioned, source-only local gate with:
+
+```shell
+scripts/check-local-pre-push-prereqs.sh
+scripts/install-pre-push-hook.sh
+```
+
+It validates the exact pushed branch commit in a detached temporary worktree;
+GitHub build and release workflows are manual-only. See
+[`docs/local-pre-push-ci.md`](./docs/local-pre-push-ci.md) for scope and
+platform-build limits.
 
 # Features
 

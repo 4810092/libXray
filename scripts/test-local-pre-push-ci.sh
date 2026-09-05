@@ -54,6 +54,7 @@ fi
 
 python3 - <<'PY'
 from pathlib import Path
+import re
 
 for path in Path(".github/workflows").glob("*.yml"):
     text = path.read_text(encoding="utf-8")
@@ -62,6 +63,14 @@ for path in Path(".github/workflows").glob("*.yml"):
     for forbidden in ("\n  push:", "\n  pull_request:", "\n  schedule:"):
         if forbidden in text:
             raise SystemExit(f"automatic trigger remains in {path}: {forbidden.strip()}")
+    if "self-hosted" in text:
+        raise SystemExit(f"self-hosted runner remains in {path}")
+    if re.search(r"^\s*runs-on:\s*[^#\n]*-latest\s*(?:#.*)?$", text, re.MULTILINE):
+        raise SystemExit(f"floating runner label remains in {path}")
+    for match in re.finditer(r"^\s*(?:-\s*)?uses:\s*([^\s@]+)@([^\s#]+)", text, re.MULTILINE):
+        action, ref = match.groups()
+        if not action.startswith("./") and not re.fullmatch(r"[0-9a-f]{40}", ref):
+            raise SystemExit(f"external action is not immutable in {path}: {action}@{ref}")
 
 driver = Path("scripts/local-pre-push-ci.sh").read_text(encoding="utf-8")
 for required in (

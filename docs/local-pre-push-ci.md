@@ -70,8 +70,11 @@ Android NDK toolchain. A future release gate must first pin Go, gomobile, NDK,
 Xray-core input, and geo-data input, then run only in a disposable worktree
 with artifact outputs outside the source tree.
 
-GitHub workflows are manual `workflow_dispatch` entry points. `build.yml`
-uploads manual build artifacts only; its unreachable tag-release job was
-removed. Publishing a GitHub Release is a separate provider-bound operation
-and needs a reviewed manual workflow with explicit release-tag input,
-artifact-provenance verification, and its own trust/authorization gate.
+The former hosted `validate.yml` and `libxray-test.yml` duplicates were removed:
+their checks now run only in this local pre-push gate. The remaining GitHub
+workflows are manual `workflow_dispatch` release operations. `build.yml`
+uploads explicitly requested cross-platform build artifacts only; it is not
+routine CI and its unreachable tag-release job was removed. Publishing a
+GitHub Release is a separate provider-bound operation and needs a reviewed
+manual workflow with explicit release-tag input, artifact-provenance
+verification, and its own trust/authorization gate.
